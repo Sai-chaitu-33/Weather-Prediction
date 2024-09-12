@@ -1,0 +1,292 @@
+﻿@page "/"
+@using FavWeather.Models
+@using FavWeather.Services
+@inject NavigationManager Navigation
+@inject FavoriteCityService FavoriteCityService
+@inject Blazored.LocalStorage.ILocalStorageService localStorage
+@inject HttpClient httpClient
+@rendermode InteractiveServer
+
+<PageTitle>Weather Search</PageTitle>
+
+<style>
+    .weather-header {
+        
+        color: black;
+        padding: 10px;
+        font-size: 24px;
+        font-weight: bold;
+        display: flex;
+        margin-left:500px;
+        align-items: center;
+    }
+
+   
+    .weather-card {
+        border-radius: 8px;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        margin-bottom: 20px;
+        padding: 15px;
+        background-color: #fff;
+    }
+
+    .weather-button {
+        background-color: #ff5722;
+        color: #fff;
+        border: none;
+        padding: 10px 15px;
+        border-radius: 5px;
+        cursor: pointer;
+    }
+
+    
+    .material-symbols-outlined {
+        font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 40
+    }
+
+
+        .weather-button:hover {
+            background-color: #e64a19;
+        }
+
+    .favorite-icon {
+        cursor: pointer;
+        transition: color 0.3s;
+    }
+
+        .favorite-icon:hover {
+            color: gold !important;
+        }
+
+    .error-message {
+        color: red;
+        margin-top: 10px;
+    }
+
+    .loading-bar {
+        margin-top: 20px;
+    }
+</style>
+
+<RadzenContent Container="main">
+    <div class="weather-header">
+        <RadzenHeading Size="H1" Text="Weather Search" />
+        <img src="/nest_farsight_weather_34dp_5F6368_FILL0_wght400_GRAD0_opsz40.png" alt="Alternate Text" />
+    </div>
+
+    @if (step == 1)
+    {
+        <RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" Gap="1rem">
+            <RadzenLabel Text="How many cities do you want to search?" />
+            <RadzenNumeric @bind-Value="numberOfCities" Min="1" Max="10" />
+            <button class="weather-button" @onclick="SetNumberOfCities">Next</button>
+        </RadzenStack>
+    }
+    else if (step == 2)
+    {
+        <RadzenStack>
+            @for (int i = 0; i < numberOfCities; i++)
+            {
+                int index = i;
+                <RadzenTextBox Placeholder="Enter city name" @bind-Value="cityNames[index]" />
+            }
+            <button class="weather-button" @onclick="SearchCities">Search</button>
+        </RadzenStack>
+    }
+
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="error-message">@errorMessage</div>
+    }
+
+    @if (isLoading)
+    {
+        <RadzenProgressBar Value="100" ShowValue="false" Mode="ProgressBarMode.Indeterminate" class="loading-bar" />
+    }
+
+    @if (weatherResults.Count > 0)
+    {
+        <RadzenHeading Size="H2" Text="Weather Results:" />
+        <RadzenDataGrid Data="@weatherResults" TItem="WeatherforcastingModel">
+            <Columns>
+                <RadzenDataGridColumn TItem="WeatherforcastingModel" Title="Favorite" Filterable="false" Sortable="false" TextAlign="TextAlign.Center" Width="70px">
+                    <Template Context="weather">
+                        <RadzenIcon Icon="star" Style="@(IsFavorite(weather.Name) ? "color: gold;" : "color: gray;")" class="favorite-icon"
+                                    MouseEnter="@(() => ToggleFavorite(weather.Name))" />
+                    </Template>
+                </RadzenDataGridColumn>
+                <RadzenDataGridColumn TItem="WeatherforcastingModel" Property="Name" Title="City" />
+                <RadzenDataGridColumn TItem="WeatherforcastingModel" Property="Main.Temp" Title="Temperature (°C)" />
+                <RadzenDataGridColumn TItem="WeatherforcastingModel" Property="Main.feels_like" Title="Feels Like (°C)" />
+                <RadzenDataGridColumn TItem="WeatherforcastingModel" Property="Main.humidity" Title="Humidity (%)" />
+                <RadzenDataGridColumn TItem="WeatherforcastingModel" Property="Main.pressure" Title="Pressure (hPa)" />
+            </Columns>
+        </RadzenDataGrid>
+    }
+
+    <RadzenHeading Size="H2" Text="Favorite Cities" />
+
+    @if (favoriteCities.Count > 0)
+    {
+        <RadzenStack>
+            @foreach (var city in favoriteCities)
+            {
+                <div class="weather-card">
+                    <RadzenStack Orientation="Orientation.Horizontal" JustifyContent="JustifyContent.SpaceBetween" AlignItems="AlignItems.Center">
+                        <RadzenStack>
+                            <RadzenText TextStyle="TextStyle.H5">@city</RadzenText>
+                            @if (weatherDict.ContainsKey(city))
+                            {
+                                <RadzenText TextStyle="TextStyle.Body1">Temperature: @weatherDict[city].Main.Temp °C</RadzenText>
+                                <RadzenText TextStyle="TextStyle.Body1">Feels Like: @weatherDict[city].Main.feels_like °C</RadzenText>
+                                <RadzenText TextStyle="TextStyle.Body1">Humidity: @weatherDict[city].Main.humidity %</RadzenText>
+                                <RadzenText TextStyle="TextStyle.Body1">Pressure: @weatherDict[city].Main.pressure hPa</RadzenText>
+                            }
+                            else
+                            {
+                                <RadzenText TextStyle="TextStyle.Body1">Loading...</RadzenText>
+                            }
+                        </RadzenStack>
+                        <RadzenButton Icon="delete" ButtonStyle="ButtonStyle.Danger" Click="@(() => RemoveFavoriteCity(city))" />
+                    </RadzenStack>
+                </div>
+            }
+        </RadzenStack>
+    }
+    else
+    {
+        <RadzenText TextStyle="TextStyle.Body1">No favorite cities added yet.</RadzenText>
+    }
+</RadzenContent>
+
+
+@code {
+    private int step = 1;
+    private int numberOfCities = 1;
+    private List<string> cityNames = new List<string>();
+    private List<WeatherforcastingModel> weatherResults = new List<WeatherforcastingModel>();
+    private Dictionary<string, WeatherforcastingModel> weatherDict = new Dictionary<string, WeatherforcastingModel>();
+    private string ApiKey = "071c3423863f9b0f3ba1f1ce12c0ded9";
+    private List<string> favoriteCities = new List<string>();
+    private bool isLoading;
+    private string errorMessage = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadFavoriteCities();
+        await LoadWeatherForFavoriteCities();
+    }
+
+    private void SetNumberOfCities()
+    {
+        if (numberOfCities < 1 || numberOfCities > 10)
+        {
+            errorMessage = "Please enter a number between 1 and 10.";
+            return;
+        }
+
+        cityNames = new List<string>(new string[numberOfCities]);
+        step = 2;
+        errorMessage = string.Empty;
+    }
+
+    private async Task SearchCities()
+    {
+        if (cityNames.Any(string.IsNullOrWhiteSpace))
+        {
+            errorMessage = "Please enter all city names.";
+            return;
+        }
+
+        errorMessage = string.Empty;
+        isLoading = true;
+        weatherResults.Clear();
+
+        try
+        {
+            foreach (var cityName in cityNames)
+            {
+                string apiUrl = $"https://api.openweathermap.org/data/2.5/weather?q={cityName}&appid={ApiKey}&units=metric";
+                var weather = await httpClient.GetFromJsonAsync<WeatherforcastingModel>(apiUrl);
+                if (weather != null)
+                {
+                    weatherResults.Add(weather);
+                }
+            }
+        }
+        catch (HttpRequestException ex)
+        {
+            errorMessage = "Error fetching weather data. Please check the city names and try again.";
+            Console.WriteLine($"HTTP request error: {ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "An unexpected error occurred. Please try again later.";
+            Console.WriteLine($"Error fetching weather data: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadFavoriteCities()
+    {
+        favoriteCities = await FavoriteCityService.GetFavoriteCitiesAsync();
+    }
+
+    private async Task RemoveFavoriteCity(string cityName)
+    {
+        await FavoriteCityService.RemoveFavoriteCityAsync(cityName);
+        favoriteCities.Remove(cityName);
+        weatherDict.Remove(cityName);
+        StateHasChanged();
+    }
+
+    private async Task LoadWeatherForFavoriteCities()
+    {
+        foreach (var city in favoriteCities)
+        {
+            if (!weatherDict.ContainsKey(city))
+            {
+                try
+                {
+                    string apiUrl = $"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={ApiKey}&units=metric";
+                    var response = await httpClient.GetFromJsonAsync<WeatherforcastingModel>(apiUrl);
+                    if (response != null)
+                    {
+                        weatherDict[city] = response;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error fetching weather for {city}: {ex.Message}");
+                }
+            }
+        }
+        StateHasChanged();
+    }
+
+    private bool IsFavorite(string cityName)
+    {
+        return favoriteCities.Contains(cityName);
+    }
+
+    private async Task ToggleFavorite(string cityName)
+    {
+        if (await FavoriteCityService.IsFavoriteCityAsync(cityName))
+        {
+            await FavoriteCityService.RemoveFavoriteCityAsync(cityName);
+            favoriteCities.Remove(cityName);
+            weatherDict.Remove(cityName);
+        }
+        else
+        {
+            await FavoriteCityService.AddFavoriteCityAsync(cityName);
+            favoriteCities.Add(cityName);
+            await LoadWeatherForFavoriteCities();
+        }
+        StateHasChanged();
+    }
+}
